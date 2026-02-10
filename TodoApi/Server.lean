@@ -20,15 +20,11 @@ opaque tcpSend (fd : UInt32) (data : @& String) : IO Unit
 opaque tcpClose (fd : UInt32) : IO Unit
 
 /-- Handle a single client connection. -/
-def handleClient (clientFd : UInt32) (store : IO.Ref Store) : IO Unit := do
+def handleClient (clientFd : UInt32) (conn : PgConn) : IO Unit := do
   try
     let raw ← tcpRecv clientFd
     let response ← match parseRequest raw with
-      | some req => do
-        let s ← store.get
-        let (resp, newStore) := handleRequest req s
-        store.set newStore
-        pure resp
+      | some req => handleRequest req conn
       | none => pure (badRequest "Malformed HTTP request")
     tcpSend clientFd response.serialize
   catch e =>
@@ -42,11 +38,16 @@ def handleClient (clientFd : UInt32) (store : IO.Ref Store) : IO Unit := do
 
 /-- Start the HTTP server on the given port. -/
 def serve (port : UInt16 := 8080) : IO Unit := do
+  let connStr ← do
+    match ← IO.getEnv "DATABASE_URL" with
+    | some url => pure url
+    | none => pure "host=localhost dbname=todo_api"
+  let conn ← pgConnect connStr
+  dbInit conn
   let serverFd ← tcpListen port
   IO.println s!"Server listening on http://localhost:{port}"
-  let store ← IO.mkRef Store.empty
   repeat do
     let clientFd ← tcpAccept serverFd
-    handleClient clientFd store
+    handleClient clientFd conn
 
 end TodoApi

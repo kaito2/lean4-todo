@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(lean:*)",
+      "Bash(lake:*)",
+      "Bash(elan:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:reservoir.lean-lang.org)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:leanprover-community.github.io)",
+      "Bash(find:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"$\\(cat <<''EOF''\nAdd Lean 4 TODO REST API server with C FFI sockets\n\nImplement a complete TODO list REST API in Lean 4 with CRUD endpoints\n\\(GET/POST/PUT/DELETE /todos\\) using in-memory storage. HTTP server is\nbuilt on POSIX sockets via C FFI, with pure Lean HTTP parsing, JSON\nserialization, and request routing. Zero external dependencies.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
+      "WebFetch(domain:www.enterprisedb.com)",
+      "Bash(pg_config:*)",
+      "Bash(brew list:*)",
+      "Bash(brew install:*)",
+      "Bash(docker compose up:*)",
+      "Bash(curl:*)",
+      "Bash(docker compose:*)"
+    ]
+  }
+}

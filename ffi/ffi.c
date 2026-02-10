@@ -6,6 +6,8 @@
 #include <string.h>
 #include <signal.h>
 #include <errno.h>
+#include <stdlib.h>
+#include <libpq-fe.h>
 
 static lean_obj_res mk_io_error(const char *msg) {
     return lean_io_result_mk_error(
@@ -67,4 +69,118 @@ LEAN_EXPORT lean_obj_res lean_tcp_send(uint32_t fd, b_lean_obj_arg str, lean_obj
 LEAN_EXPORT lean_obj_res lean_tcp_close(uint32_t fd, lean_obj_arg world) {
     close((int)fd);
     return lean_io_result_mk_ok(lean_box(0));
+}
+
+/* ── libpq FFI ─────────────────────────────────────────────── */
+
+static void pg_conn_finalize(void *ptr) {
+    PGconn *conn = (PGconn *)ptr;
+    if (conn) PQfinish(conn);
+}
+
+static void pg_conn_foreach(void *ptr, b_lean_obj_arg fn) {
+    (void)ptr; (void)fn;
+}
+
+static lean_external_class *g_pg_conn_class = NULL;
+
+static lean_external_class *get_pg_conn_class(void) {
+    if (!g_pg_conn_class) {
+        g_pg_conn_class = lean_register_external_class(
+            pg_conn_finalize, pg_conn_foreach);
+    }
+    return g_pg_conn_class;
+}
+
+static inline PGconn *pg_conn_of(b_lean_obj_arg o) {
+    return (PGconn *)lean_get_external_data(o);
+}
+
+LEAN_EXPORT lean_obj_res lean_pg_connect(b_lean_obj_arg conn_str, lean_obj_arg world) {
+    const char *cs = lean_string_cstr(conn_str);
+    PGconn *conn = PQconnectdb(cs);
+    if (PQstatus(conn) != CONNECTION_OK) {
+        const char *err = PQerrorMessage(conn);
+        lean_obj_res msg = lean_mk_string(err);
+        PQfinish(conn);
+        return lean_io_result_mk_error(lean_mk_io_user_error(msg));
+    }
+    lean_obj_res obj = lean_alloc_external(get_pg_conn_class(), (void *)conn);
+    return lean_io_result_mk_ok(obj);
+}
+
+LEAN_EXPORT lean_obj_res lean_pg_exec(b_lean_obj_arg conn_obj, b_lean_obj_arg sql_obj,
+                                       b_lean_obj_arg params_obj, lean_obj_arg world) {
+    PGconn *conn = pg_conn_of(conn_obj);
+    const char *sql = lean_string_cstr(sql_obj);
+
+    size_t nParams = lean_array_size(params_obj);
+    const char **paramValues = NULL;
+    if (nParams > 0) {
+        paramValues = (const char **)malloc(nParams * sizeof(char *));
+        for (size_t i = 0; i < nParams; i++) {
+            lean_obj_arg elem = lean_array_cptr(params_obj)[i];
+            paramValues[i] = lean_string_cstr(elem);
+        }
+    }
+
+    PGresult *res = PQexecParams(conn, sql, (int)nParams, NULL,
+                                  paramValues, NULL, NULL, 0);
+    free(paramValues);
+
+    ExecStatusType st = PQresultStatus(res);
+    if (st != PGRES_COMMAND_OK && st != PGRES_TUPLES_OK) {
+        const char *err = PQresultErrorMessage(res);
+        lean_obj_res msg = lean_mk_string(err);
+        PQclear(res);
+        return lean_io_result_mk_error(lean_mk_io_user_error(msg));
+    }
+
+    const char *affected = PQcmdTuples(res);
+    size_t n = 0;
+    if (affected && affected[0]) n = (size_t)atol(affected);
+    PQclear(res);
+    return lean_io_result_mk_ok(lean_box(n));
+}
+
+LEAN_EXPORT lean_obj_res lean_pg_query(b_lean_obj_arg conn_obj, b_lean_obj_arg sql_obj,
+                                        b_lean_obj_arg params_obj, lean_obj_arg world) {
+    PGconn *conn = pg_conn_of(conn_obj);
+    const char *sql = lean_string_cstr(sql_obj);
+
+    size_t nParams = lean_array_size(params_obj);
+    const char **paramValues = NULL;
+    if (nParams > 0) {
+        paramValues = (const char **)malloc(nParams * sizeof(char *));
+        for (size_t i = 0; i < nParams; i++) {
+            lean_obj_arg elem = lean_array_cptr(params_obj)[i];
+            paramValues[i] = lean_string_cstr(elem);
+        }
+    }
+
+    PGresult *res = PQexecParams(conn, sql, (int)nParams, NULL,
+                                  paramValues, NULL, NULL, 0);
+    free(paramValues);
+
+    ExecStatusType st = PQresultStatus(res);
+    if (st != PGRES_TUPLES_OK) {
+        const char *err = PQresultErrorMessage(res);
+        lean_obj_res msg = lean_mk_string(err);
+        PQclear(res);
+        return lean_io_result_mk_error(lean_mk_io_user_error(msg));
+    }
+
+    int nRows = PQntuples(res);
+    int nCols = PQnfields(res);
+    lean_obj_res outer = lean_mk_empty_array();
+    for (int r = 0; r < nRows; r++) {
+        lean_obj_res row = lean_mk_empty_array();
+        for (int c = 0; c < nCols; c++) {
+            const char *val = PQgetvalue(res, r, c);
+            row = lean_array_push(row, lean_mk_string(val ? val : ""));
+        }
+        outer = lean_array_push(outer, row);
+    }
+    PQclear(res);
+    return lean_io_result_mk_ok(outer);
 }
